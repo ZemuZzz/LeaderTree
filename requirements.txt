@@ -1,0 +1,12 @@
+Pillow>=8.1.1
+pycryptodome
+requests
+tiktoken
+OpenAI
+
+# 自动通过风控滑块验证码需要 Playwright(可选):
+#   pip install playwright
+#   playwright install chromium
+# 不装也能跑: 遇到验证码只会等待重试, 重试多次仍失败才跳过该视频.
+# 也可以用系统已装浏览器: python main.py --captcha_channel msedge
+# playwright>=1.30
