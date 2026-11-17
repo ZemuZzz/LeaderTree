@@ -984,6 +984,9 @@ class Commander:
             "recruitId": recruit_id,
             "videoId": video.videoId 
         }
+        # 网页版在 prelearningNote 之前就算好了这个 ev，验证码通过后 validateSlideToken 要原样带回去，
+        # 不然服务端会认为 validate 和上下文对不上（就是"验证码过了但服务端不认"）
+        self.ev_log = getEv([recruit_id, video.lessonId, video.id, video.videoId, video.chapterId])
         return self.zhidaoQuery(note_url, data=data).data
 
     def loadVideoPointerInfo(self, RAC_id, video_id):
@@ -1053,9 +1056,11 @@ class Commander:
         if not token_id:
             token_id = self.prelearningNote(RAC_id, video_id).studiedLessonDto.id
             token_id = b64encode(str(token_id).encode()).decode()
+        ev = getEv(raw_ev)
+        self.ev_log = ev
         data = {
             "watchPoint": watch_point,
-            "ev": getEv(raw_ev),
+            "ev": ev,
             "learningTokenId": token_id
         }
         return self.zhidaoQuery(record_url, data=data).data
@@ -1101,9 +1106,11 @@ class Commander:
         if not token_id:
             token_id = self.prelearningNote(RAC_id, video_id).studiedLessonDto.id
             token_id = b64encode(str(token_id).encode()).decode()
+        ev = getEv(raw_ev)
+        self.ev_log = ev
         data = {
             "ewssw": watch_point,
-            "sdsew": getEv(raw_ev),
+            "sdsew": ev,
             "zwsds": token_id,
             "courseId": ctx.course.courseInfo.courseId
         }
@@ -1134,9 +1141,11 @@ class Commander:
         if not token_id:
             token_id = self.prelearningNote(RAC_id, video_id).studiedLessonDto.id
             token_id = b64encode(str(token_id).encode()).decode()
+        ev = getEv(raw_ev)
+        self.ev_log = ev
         data = {
             "watchPoint": watch_point,
-            "ev": getEv(raw_ev),
+            "ev": ev,
             "learningTokenId": token_id
         }
         return self.zhidaoQuery(cache_url, data=data).data
