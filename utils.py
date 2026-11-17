@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import io
+import json
 import os
 import sys
 from requests.cookies import RequestsCookieJar, create_cookie
@@ -118,6 +119,61 @@ def prescanProfile(argv):
         if a.startswith("--profile="):
             return a.split("=", 1)[1].strip() or None
     return None
+
+
+def resolveProfile(argv):
+    """--profile 优先；没给就用根目录 config.json 里的 default_profile"""
+    name = prescanProfile(argv)
+    if name:
+        return name
+    try:
+        with open(getRealPath("config.json"), "r", encoding="utf-8") as f:
+            return (json.load(f).get("default_profile") or "").strip() or None
+    except Exception:
+        return None
+
+
+def listProfiles():
+    """所有账号 profile 的名字（profiles/ 下的目录）"""
+    base = getRealPath("profiles")
+    if not os.path.isdir(base):
+        return []
+    return sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n)))
+
+
+def describeProfiles():
+    """账号列表及状态：名字 / 是否登录 / 最后使用时间 / 有没有独立配置"""
+    rows = []
+    base = getRealPath("profiles")
+    for name in listProfiles():
+        folder = os.path.join(base, name)
+        cookies = os.path.join(folder, "cookies.json")
+        logged = False
+        if os.path.isfile(cookies):
+            try:
+                with open(cookies, "r", encoding="utf-8") as f:
+                    logged = bool(json.load(f))
+            except Exception:
+                logged = False
+        mtime = 0
+        for path in (folder, cookies):
+            if os.path.exists(path):
+                mtime = max(mtime, os.path.getmtime(path))
+        rows.append({
+            "name": name,
+            "logged": logged,
+            "mtime": mtime,
+            "config": os.path.isfile(os.path.join(folder, "config.json")),
+        })
+    return rows
+
+
+def safeProfileName(name: str):
+    """只允许普通名字，挡掉 ../ 这种路径穿越"""
+    name = (name or "").strip()
+    if not name or name in (".", "..") or os.sep in name or (os.altsep and os.altsep in name):
+        return None
+    return name
 
 
 def getConfigPath():

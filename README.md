@@ -324,23 +324,29 @@ def saveCacheIntervalTime(self, RAC_id, video_id, played_time, last_submit, watc
 每个账号用 `--profile <名字>` 完全隔离，不加参数就和原来一样（单账号，状态文件在根目录）。
 
 ```powershell
-# 账号 A：第一次运行会自动建 profiles/alice/，扫码登录后 cookies 存在那里
-python main.py --profile alice -c <课程ID>
-python homework.py --profile alice --course <recruitAndCourseId>
+# 新增账号：第一次跑会建 profiles/<名字>/，并引导扫码登录
+python main.py --profile 我的号
 
-# 账号 B
-python main.py --profile bob --login -c <课程ID>
-python homework.py --profile bob --course <recruitAndCourseId>
+# 之后所有命令都带上同一个名字
+python main.py --profile 我的号 -c <课程ID>
+python homework.py --profile 我的号 --course <recruitAndCourseId>
 ```
 
-每个 profile 目录里放的是：`cookies.json`、`config.json`、`execution.json`、`logs/`、`aiexamAnswer/`（AI 课程答题缓存）。
+### 账号管理
 
-注意：
+```powershell
+python main.py --profiles                  # 列出所有账号：名字 / 登录态 / 最后使用时间 / 有没有独立配置
+python main.py --profile-default 我的号     # 设为默认账号：以后不带 --profile 就用它
+python main.py --profile-remove 我的号      # 删除账号（含 cookies / 日志 / 缓存），加 --yes 跳过确认
+python homework.py --profiles              # 作业脚本里也能看
+```
 
-- `--profile` 要**每个命令都带**，否则会退回根目录的单账号状态；
+- 账号名就是 `profiles/` 下的目录名，建议取看得懂的（中文也行）；
+- 「登录态」读的是 `profiles/<名字>/cookies.json`，显示“未登录”说明还没扫码或者登录态过期；
+- 默认账号记录在根目录 `config.json` 的 `default_profile` 字段里，想取消就设回空字符串；
+- 每个 profile 目录里独立存放：`cookies.json`、`config.json`、`execution.json`、`logs/`、`aiexamAnswer/`（AI 课程答题缓存）；
 - 第一次用某个 profile 时，如果根目录有 `config.json`，会自动复制一份过去（API key、验证码配置都省得重配）；
-- `profiles/` 已经写进 `.gitignore`，不会误提交别人的登录态；
-- 想重置某个账号：删掉 `profiles/<名字>/`，下次重新扫码即可。
+- `profiles/` 已经写进 `.gitignore`，不会误提交别人的登录态。
 
 ---
 

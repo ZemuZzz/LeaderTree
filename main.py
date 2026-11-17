@@ -3,6 +3,7 @@ import re
 import json
 import argparse
 import sys
+import time
 import requests
 import platform
 from functools import partial
@@ -10,10 +11,11 @@ from contextlib import suppress
 from ObjDict import ObjDict
 from utils import showImage, cookie_jar_to_list
 from utils import (getConfigPath, getRealPath, getStatePath, getProfile,
-                   versionCmp, fillDefaults, setProfile, prescanProfile)
+                   versionCmp, fillDefaults, setProfile, prescanProfile,
+                   resolveProfile, describeProfiles, safeProfileName)
 
 # 先确定账号 profile（必须在 import logger / commander 之前，日志和缓存目录才会跟着走）
-setProfile(prescanProfile(sys.argv[1:]))
+setProfile(resolveProfile(sys.argv[1:]))
 
 from commander import Commander
 from logger import logger
@@ -25,6 +27,7 @@ DEFAULT_CONFIG = {
     "save_cookies": True,
     "proxies": {},
     "logLevel": "INFO",
+    "default_profile": "",
     "tree_view": True,
     "progressbar_view": True,
     "qr_extra": {
@@ -150,6 +153,13 @@ parser.add_argument("-l", "--limit", type=int, default=0,
                     help="Time Limit (in minutes, 0 for no limit), default is 0")
 parser.add_argument("--profile", type=str, default=None,
                     help="账号 profile（多账号用）：状态文件放到 profiles/<名字>/，不加就是原来的行为")
+parser.add_argument("--profiles", action="store_true",
+                    help="列出所有账号 profile（名字 / 登录态 / 最后使用时间）")
+parser.add_argument("--profile-default", type=str, metavar="NAME",
+                    help="把某个 profile 设为默认账号（以后不带 --profile 就用它）")
+parser.add_argument("--profile-remove", type=str, metavar="NAME",
+                    help="删除某个账号 profile（含 cookies / 日志 / 缓存）")
+parser.add_argument("--yes", action="store_true", help="删除 profile 时跳过确认")
 parser.add_argument("-q", "--qrlogin", action="store_true",
                     help="Use QR Login")
 parser.add_argument("-d", "--debug", action="store_true", help="Debug Mode")
@@ -184,6 +194,81 @@ parser.add_argument("--noexam", type=bool,
                     help="Disable AI exam")
 
 args = parser.parse_args()
+
+# ---------- 账号 profile 管理 ----------
+def _rootConfigData():
+    path = getRealPath("config.json")
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as fp:
+            return json.load(fp)
+    return {}
+
+
+def _saveDefaultProfile(name):
+    data = _rootConfigData()
+    data["default_profile"] = name
+    with open(getRealPath("config.json"), "w", encoding="utf-8") as fp:
+        json.dump(data, fp, indent=4, ensure_ascii=False)
+
+
+if args.profiles:
+    rows = describeProfiles()
+    if not rows:
+        print("还没有任何账号。跑 python main.py --profile <名字> 新建一个（会引导扫码登录）")
+    else:
+        print("%-18s %-8s %-20s %s" % ("名字", "登录态", "最后使用", "配置"))
+        print("-" * 66)
+        for row in rows:
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(row["mtime"])) \
+                if row["mtime"] else "-"
+            print("%-18s %-8s %-20s %s" % (
+                row["name"],
+                "已登录" if row["logged"] else "未登录",
+                when,
+                "有" if row["config"] else "-"))
+    sys.exit(0)
+
+if args.profile_default:
+    name = safeProfileName(args.profile_default)
+    if not name:
+        print("账号名字不合法: %r" % args.profile_default)
+        sys.exit(1)
+    if name not in [row["name"] for row in describeProfiles()]:
+        print("没有这个账号: %s（先跑 python main.py --profile %s 登录一次）" % (name, name))
+        sys.exit(1)
+    _saveDefaultProfile(name)
+    print("默认账号已设为: %s（以后不带 --profile 就用它）" % name)
+    sys.exit(0)
+
+if args.profile_remove:
+    name = safeProfileName(args.profile_remove)
+    if not name:
+        print("账号名字不合法: %r" % args.profile_remove)
+        sys.exit(1)
+    target = getRealPath(os.path.join("profiles", name))
+    if not os.path.isdir(target) or os.path.dirname(target) != getRealPath("profiles"):
+        print("没有这个账号: %s" % name)
+        sys.exit(1)
+    if not args.yes:
+        try:
+            answer = input("确认删除账号 %s 吗？（cookies / 日志 / 缓存都会删掉）[y/N] " % name)
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("已取消")
+            sys.exit(0)
+    import logging
+    import shutil
+    logging.shutdown()   # 先关日志句柄，否则 Windows 上删不掉 logs/
+    shutil.rmtree(target, ignore_errors=True)
+    if os.path.isdir(target):
+        print("删除失败：目录还被占用（%s），关掉其他窗口再试" % target)
+        sys.exit(1)
+    if (_rootConfigData().get("default_profile") or "") == name:
+        _saveDefaultProfile("")
+        print("默认账号已清空")
+    print("已删除账号: %s" % name)
+    sys.exit(0)
 
 course = args.course
 username = args.username or config.username

@@ -30,10 +30,11 @@ import time
 from html import unescape
 
 from utils import (getConfigPath, getRealPath, getStatePath, getProfile,
-                   showImage, cookie_jar_to_list, setProfile, prescanProfile)
+                   showImage, cookie_jar_to_list, setProfile, resolveProfile,
+                   describeProfiles)
 
 # 先确定账号 profile（要在 import logger / commander 之前，日志目录才会跟着走）
-setProfile(prescanProfile(sys.argv[1:]))
+setProfile(resolveProfile(sys.argv[1:]))
 
 from ObjDict import ObjDict
 from zd_utils import Cipher, EXAM_KEY
@@ -694,6 +695,7 @@ def main():
     parser.add_argument("--only", help="只处理名称包含该关键字的作业")
     parser.add_argument("--profile", type=str, default=None,
                         help="账号 profile（多账号用）：cookies/config/日志放到 profiles/<名字>/")
+    parser.add_argument("--profiles", action="store_true", help="列出所有账号 profile")
     parser.add_argument("--login", action="store_true", help="SSO 失败时直接扫码重新登录")
     parser.add_argument("--force", action="store_true", help="忽略已答题目，全部重做")
     parser.add_argument("--limit", type=int, default=0, help="最多处理几个作业")
@@ -706,6 +708,22 @@ def main():
                         help="思考模式开关（DeepSeek 默认开，做题建议关）")
     parser.add_argument("--test-ai", action="store_true", help="只测一下模型能不能用，然后退出")
     args = parser.parse_args()
+
+    if args.profiles:
+        rows = describeProfiles()
+        if not rows:
+            print("还没有任何账号。跑 python main.py --profile <名字> 新建一个")
+            return 0
+        print("%-18s %-8s %-20s %s" % ("名字", "登录态", "最后使用", "配置"))
+        print("-" * 66)
+        for row in rows:
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(row["mtime"])) if row["mtime"] else "-"
+            print("%-18s %-8s %-20s %s" % (
+                row["name"],
+                "已登录" if row["logged"] else "未登录",
+                when,
+                "有" if row["config"] else "-"))
+        return 0
 
     config = load_config()
 

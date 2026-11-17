@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """多账号 profile 的单元测试"""
+import io
+import json
 import os
 import shutil
 import sys
@@ -60,6 +62,51 @@ class ProfileTest(unittest.TestCase):
         utils.setProfile("alice")
         utils.setProfile("   ")
         self.assertIsNone(utils.getProfile())
+
+
+class ProfileManageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._orig = utils.getDir
+        utils.getDir = lambda: self.tmp
+        utils.setProfile(None)
+
+    def tearDown(self):
+        utils.setProfile(None)
+        utils.getDir = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_resolve_from_argv(self):
+        self.assertEqual(utils.resolveProfile(["--profile", "x"]), "x")
+
+    def test_resolve_default_from_config(self):
+        with io.open(os.path.join(self.tmp, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"default_profile": "dflt"}, f)
+        self.assertEqual(utils.resolveProfile([]), "dflt")
+
+    def test_resolve_no_config(self):
+        self.assertIsNone(utils.resolveProfile([]))
+
+    def test_list_and_describe(self):
+        utils.setProfile("alice")
+        with io.open(utils.getStatePath("cookies.json"), "w", encoding="utf-8") as f:
+            json.dump({"uuid": "u"}, f)
+        with io.open(utils.getStatePath("config.json"), "w", encoding="utf-8") as f:
+            json.dump({}, f)
+        utils.setProfile(None)
+        self.assertEqual(utils.listProfiles(), ["alice"])
+        rows = utils.describeProfiles()
+        self.assertEqual(rows[0]["name"], "alice")
+        self.assertTrue(rows[0]["logged"])
+        self.assertTrue(rows[0]["config"])
+        self.assertGreater(rows[0]["mtime"], 0)
+
+    def test_safe_profile_name(self):
+        self.assertIsNone(utils.safeProfileName("../etc"))
+        self.assertIsNone(utils.safeProfileName("a/b"))
+        self.assertIsNone(utils.safeProfileName(""))
+        self.assertIsNone(utils.safeProfileName(".."))
+        self.assertEqual(utils.safeProfileName(" 张三 "), "张三")
 
 
 if __name__ == "__main__":
