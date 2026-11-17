@@ -22,17 +22,23 @@ recruitAndCourseId 就是刷课用的那个课程 ID（URL 里带字母的那串
 """
 import argparse
 import json
+import os
 import random
 import re
 import sys
 import time
 from html import unescape
 
+from utils import (getConfigPath, getRealPath, getStatePath, getProfile,
+                   showImage, cookie_jar_to_list, setProfile, prescanProfile)
+
+# 先确定账号 profile（要在 import logger / commander 之前，日志目录才会跟着走）
+setProfile(prescanProfile(sys.argv[1:]))
+
 from ObjDict import ObjDict
 from zd_utils import Cipher, EXAM_KEY
 from logger import logger
 from commander import Commander, CaptchaException
-from utils import getConfigPath, getRealPath, showImage, cookie_jar_to_list
 
 HOME_BASE = "https://studentexam-api.zhihuishu.com"
 PASSPORT = "https://passport.zhihuishu.com"
@@ -368,12 +374,24 @@ def extract_questions(detail):
 
 
 def load_config():
-    with open(getConfigPath(), "r", encoding="utf-8") as f:
+    path = getConfigPath()
+    if not os.path.isfile(path):
+        root = getRealPath("config.json")
+        if getProfile() and os.path.isfile(root):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            import shutil
+            shutil.copyfile(root, path)
+            print("已从根目录 config.json 复制配置到 profiles/%s/" % getProfile())
+        else:
+            raise SystemExit(
+                "找不到 config.json，请先跑一次 python main.py 生成配置文件%s"
+                % ("（--profile %s）" % getProfile() if getProfile() else ""))
+    with open(path, "r", encoding="utf-8") as f:
         return ObjDict(json.load(f), default=None)
 
 
 def load_cookies():
-    path = getRealPath("./cookies.json")
+    path = getStatePath("cookies.json")
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -394,7 +412,7 @@ def do_qr_login(commander, config):
                        ensure_unicode=bool(qr_extra.get("ensure_unicode") or False))
     commander.login(use_qr=True, qr_callback=callback)
     try:
-        with open(getRealPath("./cookies.json"), "w", encoding="utf-8") as f:
+        with open(getStatePath("cookies.json"), "w", encoding="utf-8") as f:
             json.dump(cookie_jar_to_list(commander.cookies), f, indent=2, ensure_ascii=False)
         print("已刷新 cookies.json")
     except Exception as exc:
@@ -552,7 +570,7 @@ def process_one(client, ai, item, recruit_id, course_id, school_id, args, course
 def save_cookies(commander):
     """把当前会话 cookies 写回 cookies.json（视频站 + 作业站的都存）"""
     try:
-        with open(getRealPath("./cookies.json"), "w", encoding="utf-8") as f:
+        with open(getStatePath("cookies.json"), "w", encoding="utf-8") as f:
             json.dump(cookie_jar_to_list(commander.session.cookies), f, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.warning("保存 cookies 失败: %s" % exc)
@@ -674,6 +692,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="只取题 + 给答案，不保存不提交")
     parser.add_argument("--submit", action="store_true", help="填完直接提交（默认停下来问你）")
     parser.add_argument("--only", help="只处理名称包含该关键字的作业")
+    parser.add_argument("--profile", type=str, default=None,
+                        help="账号 profile（多账号用）：cookies/config/日志放到 profiles/<名字>/")
     parser.add_argument("--login", action="store_true", help="SSO 失败时直接扫码重新登录")
     parser.add_argument("--force", action="store_true", help="忽略已答题目，全部重做")
     parser.add_argument("--limit", type=int, default=0, help="最多处理几个作业")
@@ -718,7 +738,8 @@ def main():
     commander = build_commander(config)
     cookies = load_cookies()
     if not cookies:
-        print("没找到 cookies.json，请先跑一次 python main.py 完成扫码登录（会自动保存）")
+        cmd = "python main.py" + (" --profile %s" % getProfile() if getProfile() else "")
+        print("没找到 cookies.json，请先跑一次 %s 完成扫码登录（会自动保存）" % cmd)
         return 1
     commander.cookies = cookies
     commander._sessionReady()   # 把 cookies 同步到 requests.Session，SSO 才有登录态

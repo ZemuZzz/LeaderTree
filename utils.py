@@ -84,8 +84,44 @@ def fillDefaults(target: dict, defaults: dict) -> bool:
     return changed
 
 
+_PROFILE = None
+
+
+def setProfile(name: str = None):
+    """选择账号 profile：状态文件（cookies/config/execution/logs/...）放到 profiles/<name>/ 下"""
+    global _PROFILE
+    _PROFILE = (name or "").strip() or None
+    if _PROFILE:
+        os.makedirs(getRealPath(os.path.join("profiles", _PROFILE)), exist_ok=True)
+    return _PROFILE
+
+
+def getProfile():
+    return _PROFILE
+
+
+def getStatePath(name: str = ""):
+    """状态文件路径：设了 profile 就在 profiles/<name>/ 里，否则还是脚本目录"""
+    if _PROFILE:
+        if not name:
+            return getRealPath(os.path.join("profiles", _PROFILE))
+        return getRealPath(os.path.join("profiles", _PROFILE, name))
+    return getRealPath(name) if name else getRealPath(".")
+
+
+def prescanProfile(argv):
+    """import logger 之前先扫一遍 --profile，保证日志 / 配置目录对得上"""
+    for i, a in enumerate(argv):
+        if a == "--profile" and i + 1 < len(argv):
+            nxt = argv[i + 1]
+            return None if nxt.startswith("-") else nxt
+        if a.startswith("--profile="):
+            return a.split("=", 1)[1].strip() or None
+    return None
+
+
 def getConfigPath():
-    return os.path.join(getDir(), 'config.json')
+    return getStatePath("config.json")
 
 def getRealPath(path: str):
     path = os.path.expanduser(path)

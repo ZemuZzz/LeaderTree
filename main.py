@@ -2,15 +2,21 @@ import os
 import re
 import json
 import argparse
+import sys
 import requests
 import platform
 from functools import partial
 from contextlib import suppress
-from commander import Commander
-from logger import logger
 from ObjDict import ObjDict
 from utils import showImage, cookie_jar_to_list
-from utils import getConfigPath, getRealPath, versionCmp, fillDefaults
+from utils import (getConfigPath, getRealPath, getStatePath, getProfile,
+                   versionCmp, fillDefaults, setProfile, prescanProfile)
+
+# 先确定账号 profile（必须在 import logger / commander 之前，日志和缓存目录才会跟着走）
+setProfile(prescanProfile(sys.argv[1:]))
+
+from commander import Commander
+from logger import logger
 
 DEFAULT_CONFIG = {
     "username": "",
@@ -79,6 +85,15 @@ DEFAULT_CONFIG = {
         "use_stream": True
     }
 }
+# 首次用某个 profile：从根目录 config.json 复制一份，省得重新配 key
+if getProfile() and not os.path.isfile(getConfigPath()):
+    _root_config = getRealPath("config.json")
+    if os.path.isfile(_root_config):
+        import shutil
+        shutil.copyfile(_root_config, getConfigPath())
+        print("****已从根目录 config.json 复制配置到 profiles/%s/****" % getProfile())
+    print("****账号 profile: %s****" % getProfile())
+
 # get config or create one if not exist
 if os.path.isfile(getConfigPath()):
     with open(getConfigPath(), 'r+', encoding="UTF-8") as f:
@@ -133,6 +148,8 @@ parser.add_argument("-t", "--threshold", type=float,
                     help="Video End Threshold, above this will be considered finished, overloaded when there are questions left unanswered")
 parser.add_argument("-l", "--limit", type=int, default=0,
                     help="Time Limit (in minutes, 0 for no limit), default is 0")
+parser.add_argument("--profile", type=str, default=None,
+                    help="账号 profile（多账号用）：状态文件放到 profiles/<名字>/，不加就是原来的行为")
 parser.add_argument("-q", "--qrlogin", action="store_true",
                     help="Use QR Login")
 parser.add_argument("-d", "--debug", action="store_true", help="Debug Mode")
@@ -260,7 +277,7 @@ commander = Commander(proxies=proxies, speed=args.speed, end_thre=args.threshold
                 captcha_debug_dir=captcha_debug_dir, captcha_max_retries=captcha_max_retries,
                 captcha_vision=captcha_vision)
 
-cookies_path = getRealPath("./cookies.json")
+cookies_path = getStatePath("cookies.json")
 cookies_loaded = False
 if save_cookies and os.path.exists(cookies_path):
     with open(cookies_path, 'r') as f:
@@ -362,7 +379,7 @@ if args.aicourse:
         exit(0)
 
 
-exec_list = getRealPath("execution.json")
+exec_list = getStatePath("execution.json")
 # fetch course list
 if args.fetch:
     with open(exec_list, "w") as f:

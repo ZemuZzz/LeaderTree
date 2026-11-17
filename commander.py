@@ -1,5 +1,5 @@
 from zd_utils import Cipher, getEv, WatchPoint, HOME_KEY, VIDEO_KEY, QA_KEY, AI_KEY, EXAM_KEY
-from utils import progressBar, HMS, wipeLine, list_to_cookie_jar, getRealPath
+from utils import progressBar, HMS, wipeLine, list_to_cookie_jar, getRealPath, getStatePath
 from urllib.parse import unquote_plus as unquote
 from requests.adapters import HTTPAdapter, Retry
 from requests.cookies import RequestsCookieJar
@@ -1838,7 +1838,7 @@ class ExamCtx:
             )
 
     def getAnswerpath(self, examTestId):
-        answerpath = getRealPath(
+        answerpath = getStatePath(
             f"aiexamAnswer/{self.courseId}/{examTestId}.json")
 
         # 确保目录存在
@@ -1852,7 +1852,7 @@ class ExamCtx:
         return answerpath
     
     def getAllAnswerpath(self): # 同课程所有题目的答案
-        answerpath = getRealPath(
+        answerpath = getStatePath(
             f"aiexamAnswer/{self.courseId}/data.json")
 
         # 确保目录存在
@@ -1867,7 +1867,7 @@ class ExamCtx:
 
     def readAnswerCache(self, examTestId):
         Allanwerpath = self.getAllAnswerpath()
-        path = getRealPath(f"aiexamAnswer/{self.courseId}/")
+        path = getStatePath(f"aiexamAnswer/{self.courseId}/")
         files = os.listdir(path)
         Allcache = {}
         for file in files:
@@ -2503,7 +2503,7 @@ class PptToTxt:
     def __init__(self, moonShotKey,baseUrl="https://api.moonshot.cn/v1", max_file_size_mb=100, max_cache_files=500, max_cache_size_gb=8, delete_immediately=False):
         self.__moonShotKey = moonShotKey 
         self.__session = requests.Session()
-        self.__download_path = getRealPath("AiDownloadCache")
+        self.__download_path = getStatePath("AiDownloadCache")
         self.__client = OpenAI(
             api_key=self.__moonShotKey,
             base_url="https://api.moonshot.cn/v1",

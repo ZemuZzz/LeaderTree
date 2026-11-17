@@ -319,6 +319,31 @@ def saveCacheIntervalTime(self, RAC_id, video_id, played_time, last_submit, watc
 
 ---
 
+## 多账号 / 切换账号
+
+每个账号用 `--profile <名字>` 完全隔离，不加参数就和原来一样（单账号，状态文件在根目录）。
+
+```powershell
+# 账号 A：第一次运行会自动建 profiles/alice/，扫码登录后 cookies 存在那里
+python main.py --profile alice -c <课程ID>
+python homework.py --profile alice --course <recruitAndCourseId>
+
+# 账号 B
+python main.py --profile bob --login -c <课程ID>
+python homework.py --profile bob --course <recruitAndCourseId>
+```
+
+每个 profile 目录里放的是：`cookies.json`、`config.json`、`execution.json`、`logs/`、`aiexamAnswer/`（AI 课程答题缓存）。
+
+注意：
+
+- `--profile` 要**每个命令都带**，否则会退回根目录的单账号状态；
+- 第一次用某个 profile 时，如果根目录有 `config.json`，会自动复制一份过去（API key、验证码配置都省得重配）；
+- `profiles/` 已经写进 `.gitignore`，不会误提交别人的登录态；
+- 想重置某个账号：删掉 `profiles/<名字>/`，下次重新扫码即可。
+
+---
+
 ## 验证码处理（风控滑块 / 点选）
 
 知到判定“刷课太快”时会返回 `code: -12`，网页版此时会弹出**网易易盾验证码**，
