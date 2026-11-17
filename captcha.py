@@ -46,6 +46,10 @@ CAPTCHA_ID_DEFAULT = "75f9f716460a422f89a628f50fd8cc2b"
 #: 智慧树自己的易盾加载器（和网页版引用的是同一个文件）
 LOADER_URL = "https://www.zhihuishu.com/assets/ableCaptcha/yidun-captcha.js"
 #: 打开验证码用的页面，必须是 zhihuishu.com 域，cookie / referer 才对得上
+# 智慧树的易盾降级方案在连续出错后会用这个写死的 validate 冒充"通过"，
+# 服务端不一定认，所以识别到它要重新初始化，不能当真。
+YIDUN_FALLBACK_VALIDATE_PREFIX = "QjGAuvoHrcpuxlbw"
+
 PAGE_URLS = (
     "https://www.zhihuishu.com/",
     "https://studyvideoh5.zhihuishu.com/",
@@ -283,7 +287,7 @@ class CaptchaSolver:
         browser_channel: str = "",
         proxy: Optional[dict] = None,
         debug_dir: str = "",
-        auto_attempts: int = 6,
+        auto_attempts: int = 3,
         vision: dict = None,
         logger=None,
     ):
@@ -301,6 +305,7 @@ class CaptchaSolver:
         self._vision_failures = 0
         self.log = logger or (lambda *a, **k: None)
         self._last_error = ""
+        self._fallback_seen = False
 
     # -- 对外接口 ---------------------------------------------------------
     @staticmethod
@@ -407,6 +412,7 @@ class CaptchaSolver:
             raise CaptchaSolveTimeout("打开智慧树页面失败: %s" % last_error)
 
         self._inject_loader(page)
+        self._fallback_seen = False
         self._init_widget(page)
 
         slide_attempts = 0
@@ -420,9 +426,22 @@ class CaptchaSolver:
             if validate:
                 return validate
             if self._widget_failed(page):
+                if self._fallback_seen:
+                    self.log("warning", "易盾自动降级（返回的是假 token），重新初始化验证码")
+                self._fallback_seen = False
                 self._init_widget(page)
                 time.sleep(1.0)
                 continue
+            if self._widget_closed(page):
+                # 验证通过后弹窗会自动关闭；先给回调/实例几秒钟，别急着重建
+                validate = self._wait_validate(page, 3.0)
+                if validate:
+                    return validate
+                self.log("warning", "验证码窗口被关闭，但没有拿到 validate，重新打开")
+                self._init_widget(page)
+                time.sleep(1.0)
+                continue
+
             frame = self._find_captcha_frame(page)
             if frame is None:
                 time.sleep(0.4)
@@ -434,9 +453,13 @@ class CaptchaSolver:
                 if slide_attempts < self.auto_attempts and self._slider_ready(frame):
                     slide_attempts += 1
                     self.log("info", "尝试验证码自动拖动 第 %d 次" % slide_attempts)
-                    if self._auto_slide(page):
-                        time.sleep(0.8)  # 等服务端返回 validate
-                        validate = self._read_validate(page)
+                    self._auto_slide(page)
+                    time.sleep(0.8)  # 等服务端返回 validate
+                    validate = self._read_validate(page)
+                    if validate:
+                        return validate
+                    if self._dom_solved(page):
+                        validate = self._wait_validate(page, 5.0)
                         if validate:
                             return validate
                     time.sleep(1.2)
@@ -452,9 +475,13 @@ class CaptchaSolver:
                     if click_attempts < self.auto_attempts and self._click_ready(frame):
                         click_attempts += 1
                         self.log("info", "尝试验证码自动点击 第 %d 次" % click_attempts)
-                        if self._auto_click(page, frame):
-                            time.sleep(1.0)
-                            validate = self._read_validate(page)
+                        self._auto_click(page, frame)
+                        time.sleep(1.0)
+                        validate = self._read_validate(page)
+                        if validate:
+                            return validate
+                        if self._dom_solved(page):
+                            validate = self._wait_validate(page, 5.0)
                             if validate:
                                 return validate
                         time.sleep(1.5)
@@ -473,12 +500,22 @@ class CaptchaSolver:
 
         if self.manual_fallback and not self.headless:
             hint = "点击" if manual_hint == "click" else "拖动"
-            self.log("warning", "自动处理未通过，请在打开的验证码窗口中手动%s" % hint)
-            manual_deadline = time.time() + 300
+            self.log("warning", "自动处理未通过，请在打开的验证码窗口中手动%s"
+                                "（通过后脚本会自动继续，不用关窗口）" % hint)
+            manual_deadline = time.time() + max(300, self.timeout)
             while time.time() < manual_deadline:
                 validate = self._read_validate(page)
                 if validate:
                     return validate
+                if self._fallback_seen:
+                    self._fallback_seen = False
+                    self._init_widget(page)
+                    time.sleep(1.0)
+                    continue
+                if self._dom_solved(page) or self._widget_closed(page):
+                    validate = self._wait_validate(page, 6.0)
+                    if validate:
+                        return validate
                 time.sleep(0.5)
         raise CaptchaSolveTimeout(self._last_error or "超时未通过验证码")
 
@@ -503,7 +540,10 @@ class CaptchaSolver:
                 box.id = 'captchaYidun';
                 box.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647';
                 document.body.appendChild(box);
-                window.__zhsCaptcha = { validate: null, error: null, closed: false, instance: null };
+                window.__zhsCaptcha = {
+                    validate: null, error: null, verifyError: null,
+                    closed: false, instance: null, success: false
+                };
                 window.initNECaptchaWithFallback({
                     element: '#captchaYidun',
                     captchaId: captchaId,
@@ -512,8 +552,15 @@ class CaptchaSolver:
                     lang: 'zh-CN',
                     enableClose: true,
                     onVerify: function (err, data) {
-                        if (err) { window.__zhsCaptcha.error = String((err && err.message) || err); return; }
+                        if (err) {
+                            // 单次没拖对/没点对：只记一下，千万别当成控件出错，
+                            // 否则会把用户正在操作的弹窗重建掉
+                            window.__zhsCaptcha.verifyError = String((err && err.message) || err);
+                            return;
+                        }
+                        window.__zhsCaptcha.verifyError = null;
                         window.__zhsCaptcha.validate = (data && data.validate) || null;
+                        window.__zhsCaptcha.success = !!(data && data.validate);
                     },
                     onError: function (err) {
                         window.__zhsCaptcha.error = String((err && err.message) || err);
@@ -531,19 +578,114 @@ class CaptchaSolver:
         )
 
     def _read_validate(self, page) -> Optional[str]:
+        """从回调或实例里取 validate；易盾降级出来的假 token 会返回 None"""
+        js = """
+        () => {
+            const c = window.__zhsCaptcha || {};
+            if (c.validate) return c.validate;
+            try {
+                const v = c.instance && c.instance.getValidate ? c.instance.getValidate() : null;
+                if (v && v.validate) return v.validate;
+            } catch (e) {}
+            return null;
+        }
+        """
         try:
-            value = page.evaluate("() => (window.__zhsCaptcha && window.__zhsCaptcha.validate) || null")
+            value = page.evaluate(js)
         except Exception:
             return None
-        return value or None
+        value = value or None
+        if value and str(value).startswith(YIDUN_FALLBACK_VALIDATE_PREFIX):
+            self._fallback_seen = True
+            return None
+        return value
 
-    def _widget_failed(self, page) -> bool:
+    def _dom_solved(self, page) -> bool:
+        """页面上是否已经显示"验证成功"（回调没触发时兜底）"""
+        js = """
+        () => {
+            const tips = document.querySelectorAll('.yidun_tips__text, .yidun_tips, .yidun-fallback__tip');
+            for (let i = 0; i < tips.length; i++) {
+                const t = (tips[i] && tips[i].textContent) || '';
+                if (t.indexOf('验证成功') >= 0) return true;
+            }
+            const popup = document.querySelector('#captchaYidun .yidun_popup, #captchaYidun .yidun_panel');
+            return !!(popup && popup.offsetParent === null && window.__zhsCaptcha && window.__zhsCaptcha.success);
+        }
+        """
         try:
-            err = page.evaluate("() => (window.__zhsCaptcha && window.__zhsCaptcha.error) || null")
+            return bool(page.evaluate(js))
         except Exception:
             return False
-        self._last_error = err or ""
-        return bool(err)
+
+    def _wait_validate(self, page, seconds: float) -> Optional[str]:
+        """页面已经显示"验证成功"，再等一会儿拿到 validate（回调有时慢半拍）"""
+        end = time.time() + float(seconds)
+        while time.time() < end:
+            validate = self._read_validate(page)
+            if validate:
+                return validate
+            time.sleep(0.3)
+        return None
+
+    def _captcha_visible(self, page) -> bool:
+        """验证码弹窗是不是还在页面上（还在就别重建，免得把用户正在操作的弹窗干掉）"""
+        js = """
+        () => {
+            const box = document.querySelector('#captchaYidun');
+            if (!box) return false;
+            const el = box.querySelector('.yidun_bgimg, .yidun_popup, .yidun_panel, .yidun_slider, .yidun_point');
+            if (!el) return false;
+            return el.offsetParent !== null;
+        }
+        """
+        try:
+            return bool(page.evaluate(js))
+        except Exception:
+            return False
+
+    def _widget_failed(self, page) -> bool:
+        """控件是否真的挂了：有致命错误、有降级假 token、或者用户把弹窗关了"""
+        try:
+            state = page.evaluate("""
+            () => {
+                const c = window.__zhsCaptcha || {};
+                const box = document.querySelector('#captchaYidun');
+                let visible = false;
+                if (box) {
+                    const el = box.querySelector('.yidun_bgimg, .yidun_popup, .yidun_panel, .yidun_slider, .yidun_point');
+                    visible = !!(el && el.offsetParent !== null);
+                }
+                return { error: c.error || null, closed: !!c.closed, visible: visible };
+            }
+            """)
+        except Exception:
+            return False
+        if not state:
+            return False
+        self._last_error = state.get("error") or ""
+        if self._fallback_seen:
+            return True
+        if state.get("error") and not state.get("visible"):
+            return True
+        return False
+
+    def _widget_closed(self, page) -> bool:
+        """用户把验证码窗口关了（或者验证通过后窗口自动关了）"""
+        js = """
+        () => {
+            const c = window.__zhsCaptcha || {};
+            if (!c.closed) return false;
+            const box = document.querySelector('#captchaYidun');
+            if (!box) return true;
+            const el = box.querySelector('.yidun_bgimg, .yidun_popup, .yidun_panel, .yidun_slider, .yidun_point');
+            return !(el && el.offsetParent !== null);
+        }
+        """
+        try:
+            return bool(page.evaluate(js))
+        except Exception:
+            return False
 
     def _find_captcha_frame(self, page):
         """验证码可能渲染在主页面，也可能在易盾的 iframe 里。滑块/点选都有 .yidun_bgimg"""

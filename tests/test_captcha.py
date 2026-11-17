@@ -558,5 +558,63 @@ class ClickPrecisionTest(unittest.TestCase):
         self.assertEqual((x, y), (150, 55))
 
 
+class FakePage:
+    """只用来喂 evaluate 返回值的最小页面替身"""
+
+    def __init__(self, results):
+        self.results = list(results)
+        self.calls = []
+
+    def evaluate(self, js):
+        self.calls.append(js)
+        if self.results:
+            return self.results.pop(0)
+        return None
+
+
+class CaptchaValidateDetectionTest(unittest.TestCase):
+    def setUp(self):
+        self.solver = captcha.CaptchaSolver(headless=True)
+
+    def test_read_validate_returns_token(self):
+        page = FakePage(["tok-123"])
+        self.assertEqual(self.solver._read_validate(page), "tok-123")
+        self.assertFalse(self.solver._fallback_seen)
+
+    def test_read_validate_ignores_fallback_token(self):
+        page = FakePage([captcha.YIDUN_FALLBACK_VALIDATE_PREFIX + "rest.of.token"])
+        self.assertIsNone(self.solver._read_validate(page))
+        self.assertTrue(self.solver._fallback_seen)
+
+    def test_read_validate_none(self):
+        page = FakePage([None])
+        self.assertIsNone(self.solver._read_validate(page))
+
+    def test_wait_validate_eventually_returns(self):
+        page = FakePage([None, None, "late-token"])
+        self.assertEqual(self.solver._wait_validate(page, 2.0), "late-token")
+
+    def test_wait_validate_timeout(self):
+        page = FakePage([None, None, None, None, None, None, None, None])
+        self.assertIsNone(self.solver._wait_validate(page, 0.05))
+
+    def test_widget_failed_only_without_popup(self):
+        page = FakePage([{"error": "boom", "closed": False, "visible": True}])
+        self.assertFalse(self.solver._widget_failed(page))
+        page = FakePage([{"error": "boom", "closed": False, "visible": False}])
+        self.assertTrue(self.solver._widget_failed(page))
+
+    def test_widget_failed_when_fallback_seen(self):
+        self.solver._fallback_seen = True
+        page = FakePage([{"error": None, "closed": False, "visible": True}])
+        self.assertTrue(self.solver._widget_failed(page))
+
+    def test_widget_closed(self):
+        page = FakePage([True])
+        self.assertTrue(self.solver._widget_closed(page))
+        page = FakePage([False])
+        self.assertFalse(self.solver._widget_closed(page))
+
+
 if __name__ == "__main__":
     unittest.main()

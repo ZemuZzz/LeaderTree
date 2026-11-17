@@ -531,7 +531,7 @@ class Commander:
                             self._pushplus("LeaderTree", "验证码多次未通过，已跳过该视频")
                             self._bark("LeaderTree", "验证码多次未通过，已跳过该视频")
                             tprint(prefix)
-                            tprint(f"{prefix}##Captcha not solved, skip video\a\n")
+                            tprint(f"{prefix}##Captcha failed, skip video ({e})\a\n")
                             if captcha_failures >= self.captcha_max_retries:
                                 logger.error("too many captcha failures, stop this course")
                                 self._pushplus("LeaderTree", "验证码连续失败，已停止该课程")
@@ -763,6 +763,9 @@ class Commander:
                 fn = {"debug": logger.debug, "info": logger.info,
                       "warning": logger.warning, "error": logger.error}.get(level, logger.info)
                 fn(f"[captcha] {msg}")
+                # 验证码的失败原因要能当场看到，不能只埋在 logs/ 里
+                if level in ("warning", "error"):
+                    print("   [captcha] %s" % msg)
 
             self._captchaSolver = CaptchaSolver(
                 headless=self.captcha_headless,
@@ -833,20 +836,27 @@ class Commander:
             validate = solver.solve()
         except CaptchaUnavailable as e:
             logger.error(str(e))
+            print("   [captcha] 浏览器不可用: %s" % e)
             self._solver_unavailable = True
             return False
         except CaptchaSolveTimeout as e:
             logger.error(f"captcha not solved: {e}")
+            print("   [captcha] 没通过: %s" % e)
             return False
         except Exception as e:
             logger.exception(e)
+            print("   [captcha] 异常: %s" % e)
             return False
         if not validate:
             logger.error("captcha solver returned no validate")
+            print("   [captcha] 没拿到 validate")
             return False
         logger.info("captcha solved, submitting validate token")
         ev = exc.ev() if isinstance(exc, CaptchaException) else ""
-        return self.validateSlideToken(validate, ev)
+        ok = self.validateSlideToken(validate, ev)
+        if not ok:
+            print("   [captcha] 验证码过了，但服务端不认这个 validate（ev 可能过期/无效）")
+        return ok
 
     def solveCaptchaToken(self, exc: CaptchaException = None) -> str:
         """
@@ -876,16 +886,20 @@ class Commander:
             validate = solver.solve()
         except CaptchaUnavailable as e:
             logger.error(str(e))
+            print("   [captcha] 浏览器不可用: %s" % e)
             self._solver_unavailable = True
             return ""
         except CaptchaSolveTimeout as e:
             logger.error(f"captcha not solved: {e}")
+            print("   [captcha] 没通过: %s" % e)
             return ""
         except Exception as e:
             logger.exception(e)
+            print("   [captcha] 异常: %s" % e)
             return ""
         if not validate:
             logger.error("captcha solver returned no validate")
+            print("   [captcha] 没拿到 validate")
             return ""
         logger.info("captcha solved")
         return validate
